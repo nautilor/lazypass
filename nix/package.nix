@@ -10,8 +10,6 @@ buildGoModule {
       ../go.mod
       ../go.sum
       ../main.go
-      ../ui.go
-      ../clipboard.go
       ../internal
     ];
   };

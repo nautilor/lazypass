@@ -1,4 +1,4 @@
-package main
+package ui
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/jesseduffield/gocui"
 
+	"lazypass/internal/clipboard"
 	"lazypass/internal/vault"
 )
 
@@ -44,7 +45,8 @@ type app struct {
 	clipTimer *time.Timer
 }
 
-func run(store *vault.Store) error {
+// Run starts the TUI.
+func Run(store *vault.Store) error {
 	g, err := gocui.NewGui(gocui.NewGuiOpts{OutputMode: gocui.OutputTrue, SupportOverlaps: true})
 	if err != nil {
 		return err
@@ -537,7 +539,7 @@ func (a *app) copyField(which string) error {
 	if which == "username" {
 		val = e.Username
 	}
-	if err := copyToClipboard(val); err != nil {
+	if err := clipboard.Copy(val); err != nil {
 		a.setMsg("error: " + err.Error())
 		return nil
 	}
@@ -545,7 +547,7 @@ func (a *app) copyField(which string) error {
 	if a.clipTimer != nil {
 		a.clipTimer.Stop()
 	}
-	a.clipTimer = time.AfterFunc(clipboardTTL, func() { _ = copyToClipboard("") })
+	a.clipTimer = time.AfterFunc(clipboardTTL, func() { _ = clipboard.Copy("") })
 	return nil
 }
 
@@ -554,7 +556,7 @@ func (a *app) genPassword() error {
 	if err != nil {
 		return nil
 	}
-	if err := copyToClipboard(p); err != nil {
+	if err := clipboard.Copy(p); err != nil {
 		a.setMsg("error: " + err.Error())
 		return nil
 	}

@@ -1,4 +1,4 @@
-package main
+package clipboard
 
 import (
 	"errors"
@@ -13,7 +13,7 @@ var clipCmds = [][]string{
 	{"pbcopy"},
 }
 
-func copyToClipboard(s string) error {
+func Copy(s string) error {
 	for _, c := range clipCmds {
 		if _, err := exec.LookPath(c[0]); err != nil {
 			continue

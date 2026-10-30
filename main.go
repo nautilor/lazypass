@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/term"
 
+	"lazypass/internal/ui"
 	"lazypass/internal/vault"
 )
 
@@ -37,7 +38,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if err := run(store); err != nil {
+	if err := ui.Run(store); err != nil {
 		fatal(err)
 	}
 }

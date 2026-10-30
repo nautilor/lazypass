@@ -15,7 +15,7 @@ Press `?` in-app for keys. Lose the private key = lose the passwords.
 ## Nix
 
 ```
-nix run github:<you>/lazypass     # or: nix run .
+nix run github:nautilor/lazypass     # or: nix run .
 nix develop                       # dev shell: go, gopls, delve, wl-clipboard
 ```
 
@@ -23,7 +23,7 @@ NixOS:
 
 ```nix
 {
-  inputs.lazypass.url = "github:<you>/lazypass";
+  inputs.lazypass.url = "github:nautilor/lazypass";
   # in your system config:
   imports = [ inputs.lazypass.nixosModules.default ];
   programs.lazypass.enable = true;

@@ -42,29 +42,45 @@ type app struct {
 	focus string
 	modal string // name of the active popup, "" if none
 
+	unlock   Unlocker
+	onCancel func() error // run when the active prompt is dismissed with esc
+
 	clipTimer *time.Timer
 }
 
-// Run starts the TUI.
-func Run(store *vault.Store) error {
+// Unlocker builds a store from the SSH key, given its passphrase (nil if none).
+type Unlocker func(passphrase []byte) (*vault.Store, error)
+
+// Run starts the TUI. With needPass, the key passphrase is asked in a popup first.
+func Run(unlock Unlocker, needPass bool) error {
 	g, err := gocui.NewGui(gocui.NewGuiOpts{OutputMode: gocui.OutputTrue, SupportOverlaps: true})
 	if err != nil {
 		return err
 	}
 	defer g.Close()
 
-	a := &app{g: g, store: store, focus: vWorkspaces}
+	a := &app{g: g, focus: vWorkspaces, unlock: unlock}
 	g.Highlight = true
 	g.Cursor = false
 	g.SelFgColor = gocui.ColorGreen
 	g.SelFrameColor = gocui.ColorGreen
+	a.panelColors()
 	g.SetManagerFunc(a.layout)
 
 	if err := a.bind(); err != nil {
 		return err
 	}
-	if err := a.reloadWorkspaces(""); err != nil {
-		return err
+	if needPass {
+		g.Update(func(*gocui.Gui) error { return a.askPassphrase("") })
+	} else {
+		store, err := unlock(nil)
+		if err != nil {
+			return err
+		}
+		a.store = store
+		if err := a.reloadWorkspaces(""); err != nil {
+			return err
+		}
 	}
 	if err := g.MainLoop(); err != nil && !errors.Is(err, gocui.ErrQuit) {
 		return err
@@ -398,6 +414,24 @@ func (a *app) moveEntry(d int) {
 
 // ---------- actions ----------
 
+// askPassphrase shows a masked prompt; esc quits, a wrong passphrase re-asks.
+func (a *app) askPassphrase(errMsg string) error {
+	title := "Enter passphrase for SSH key"
+	if errMsg != "" {
+		title = errMsg + " — " + strings.ToLower(title[:1]) + title[1:]
+	}
+	a.onCancel = func() error { return gocui.ErrQuit }
+	return a.prompt(title, "", true, nil, func(pass string) error {
+		store, err := a.unlock([]byte(pass))
+		if err != nil {
+			a.g.Update(func(*gocui.Gui) error { return a.askPassphrase("Wrong passphrase") })
+			return nil
+		}
+		a.store = store
+		return a.reloadWorkspaces("")
+	})
+}
+
 func (a *app) newWorkspace() error {
 	return a.prompt("New workspace", "", false, nil, func(s string) error {
 		if _, err := a.store.Create(s); err != nil {
@@ -568,13 +602,25 @@ func (a *app) genPassword() error {
 
 func (a *app) popupRect(h int) (x0, y0, x1, y1 int) {
 	w, sh := a.g.Size()
-	pw := min(w-4, 60)
+	pw := w - 8
 	x0 = (w - pw) / 2
 	y0 = (sh - h) / 2
 	return x0, y0, x0 + pw, y0 + h - 1
 }
 
+// panelColors makes the focused panel green; popups use blue (see openPopup).
+func (a *app) panelColors() {
+	a.g.SelFgColor, a.g.SelFrameColor = gocui.ColorGreen, gocui.ColorGreen
+}
+
+func (a *app) openPopup(name string) {
+	a.modal = name
+	_, _ = a.g.SetViewOnTop(name)
+	a.g.SelFgColor, a.g.SelFrameColor = gocui.ColorBlue, gocui.ColorBlue
+}
+
 func (a *app) closePopup(name string) {
+	a.panelColors()
 	a.g.DeleteViewKeybindings(name)
 	_ = a.g.DeleteView(name)
 	a.modal = ""
@@ -586,11 +632,11 @@ func (a *app) prompt(title, initial string, mask bool, extra map[gocui.Key]func(
 		return nil
 	}
 	x0, y0, x1, y1 := a.popupRect(3)
-	v, err := g.SetView(vPrompt, x0, y0, x1, y1, 1)
+	v, err := g.SetView(vPrompt, x0, y0, x1, y1, 0)
 	if err != nil && !isUnknownView(err) {
 		return err
 	}
-	a.modal = vPrompt
+	a.openPopup(vPrompt)
 	v.Title = " " + title + " "
 	v.FrameRunes = roundedFrame
 	v.Editable = true
@@ -611,11 +657,17 @@ func (a *app) prompt(title, initial string, mask bool, extra map[gocui.Key]func(
 		a.closePopup(vPrompt)
 	}
 	_ = g.SetKeybinding(vPrompt, gocui.KeyEsc, gocui.ModNone, func(*gocui.Gui, *gocui.View) error {
+		cancel := a.onCancel
+		a.onCancel = nil
 		finish()
+		if cancel != nil {
+			return cancel()
+		}
 		return nil
 	})
 	_ = g.SetKeybinding(vPrompt, gocui.KeyEnter, gocui.ModNone, func(_ *gocui.Gui, v *gocui.View) error {
 		text := strings.TrimRight(v.TextArea.GetContent(), "\n")
+		a.onCancel = nil
 		finish()
 		return done(text)
 	})
@@ -635,11 +687,11 @@ func (a *app) confirm(msg string, yes func() error) error {
 		return nil
 	}
 	x0, y0, x1, y1 := a.popupRect(3)
-	v, err := g.SetView(vConfirm, x0, y0, x1, y1, 1)
+	v, err := g.SetView(vConfirm, x0, y0, x1, y1, 0)
 	if err != nil && !isUnknownView(err) {
 		return err
 	}
-	a.modal = vConfirm
+	a.openPopup(vConfirm)
 	v.Title = " Confirm "
 	v.FrameRunes = roundedFrame
 	v.Wrap = true
@@ -682,11 +734,11 @@ func (a *app) showHelp() error {
 		"q quit   ? close help",
 	}
 	x0, y0, x1, y1 := a.popupRect(len(lines) + 2)
-	v, err := g.SetView(vHelp, x0, y0, x1, y1, 1)
+	v, err := g.SetView(vHelp, x0, y0, x1, y1, 0)
 	if err != nil && !isUnknownView(err) {
 		return err
 	}
-	a.modal = vHelp
+	a.openPopup(vHelp)
 	v.Title = " Help "
 	v.FrameRunes = roundedFrame
 	v.Clear()

@@ -7,19 +7,26 @@ import (
 	"os"
 	"path/filepath"
 
+	"lazypass/internal/config"
 	"lazypass/internal/ui"
 	"lazypass/internal/vault"
 )
 
 func main() {
 	home, _ := os.UserHomeDir()
-	cfg, _ := os.UserConfigDir()
+	confDir, _ := os.UserConfigDir()
 	keyPath := flag.String("key", filepath.Join(home, ".ssh", "id_rsa"), "RSA private key used for encryption")
-	dir := flag.String("dir", envOr("LAZYPASS_DIR", filepath.Join(cfg, "lazypass")), "directory holding workspaces")
+	dir := flag.String("dir", envOr("LAZYPASS_DIR", filepath.Join(confDir, "lazypass")), "directory holding workspaces")
+	cfgPath := flag.String("config", config.DefaultPath(), "config file")
 	flag.Parse()
 
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		fatal(err)
+	}
+
 	// Probe the key: an encrypted one is unlocked from inside the TUI.
-	_, err := vault.LoadKey(*keyPath, nil)
+	_, err = vault.LoadKey(*keyPath, nil)
 	needPass := errors.Is(err, vault.ErrPassphrase)
 	if err != nil && !needPass {
 		fatal(err)
@@ -31,7 +38,7 @@ func main() {
 		}
 		return vault.NewStore(*dir, keys)
 	}
-	if err := ui.Run(unlock, needPass); err != nil {
+	if err := ui.Run(cfg, unlock, needPass); err != nil {
 		fatal(err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/jesseduffield/gocui"
 
 	"lazypass/internal/clipboard"
+	"lazypass/internal/config"
 	"lazypass/internal/vault"
 )
 
@@ -22,8 +23,6 @@ const (
 	vHelp       = "help"
 	vToast      = "toast"
 )
-
-var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
 
 const clipboardTTL = 20 * time.Second
 
@@ -45,6 +44,7 @@ type app struct {
 	modal string // name of the active popup, "" if none
 
 	unlock   Unlocker
+	theme    *theme
 	onCancel func() error // run when the active prompt is dismissed with esc
 
 	clipTimer *time.Timer
@@ -54,19 +54,22 @@ type app struct {
 type Unlocker func(passphrase []byte) (*vault.Store, error)
 
 // Run starts the TUI. With needPass, the key passphrase is asked in a popup first.
-func Run(unlock Unlocker, needPass bool) error {
+func Run(cfg config.Config, unlock Unlocker, needPass bool) error {
+	th, err := newTheme(cfg)
+	if err != nil {
+		return err
+	}
+
 	g, err := gocui.NewGui(gocui.NewGuiOpts{OutputMode: gocui.OutputTrue, SupportOverlaps: true})
 	if err != nil {
 		return err
 	}
 	defer g.Close()
 
-	a := &app{g: g, focus: vWorkspaces, unlock: unlock}
+	a := &app{g: g, focus: vWorkspaces, unlock: unlock, theme: th}
 	g.Highlight = true
 	g.Cursor = false
-	g.SelFgColor = gocui.ColorGreen
-	g.SelFrameColor = gocui.ColorGreen
-	a.panelColors()
+	g.SelFgColor, g.SelFrameColor = th.active, th.active
 	g.SetManagerFunc(a.layout)
 
 	if err := a.bind(); err != nil {
@@ -109,7 +112,9 @@ func (a *app) layout(g *gocui.Gui) error {
 			return nil, err
 		}
 		v.Title = title
-		v.FrameRunes = roundedFrame
+		v.FrameRunes = a.theme.frame
+		v.FrameColor, v.TitleColor = a.theme.inactive, a.theme.inactive
+		v.FgColor = a.theme.defFg
 		return v, nil
 	}
 
@@ -117,8 +122,7 @@ func (a *app) layout(g *gocui.Gui) error {
 	if err != nil {
 		return err
 	}
-	v.Highlight = true
-	v.SelBgColor = gocui.ColorBlue
+	a.styleList(v, vWorkspaces)
 	a.renderWorkspaces(v)
 
 	title := " [2] Entries "
@@ -132,8 +136,7 @@ func (a *app) layout(g *gocui.Gui) error {
 	if err != nil {
 		return err
 	}
-	v.Highlight = true
-	v.SelBgColor = gocui.ColorBlue
+	a.styleList(v, vEntries)
 	a.renderEntries(v)
 
 	v, err = setup(vDetail, split, 0, w-1, h-3, " Details ")
@@ -148,6 +151,7 @@ func (a *app) layout(g *gocui.Gui) error {
 		return err
 	}
 	v.Frame = false
+	v.FgColor = a.theme.options
 	a.renderStatus(v)
 
 	if err := a.layoutToast(g, w, h); err != nil {
@@ -177,6 +181,14 @@ const (
 	cRed   = "\x1b[31m"
 	cReset = "\x1b[0m"
 )
+
+// styleList colors the selected line; unfocused lists use the inactive background.
+func (a *app) styleList(v *gocui.View, name string) {
+	v.Highlight = true
+	v.SelBgColor = a.theme.selBg
+	v.HighlightInactive = a.modal != "" || a.focus != name
+	v.InactiveViewSelBgColor = a.theme.inactiveSelBg
+}
 
 func (a *app) renderWorkspaces(v *gocui.View) {
 	v.Clear()
@@ -248,7 +260,7 @@ func (a *app) renderStatus(v *gocui.View) {
 	default:
 		hints = "a: add  e: edit  d: delete  c: copy pw  u: copy user  space: reveal  /: filter  g: generate  ?: help  q: quit"
 	}
-	fmt.Fprintf(v, " %s%s%s", cCyan, hints, cReset)
+	fmt.Fprintf(v, " %s", hints)
 }
 
 // layoutToast floats a short-lived message above the status bar.
@@ -266,8 +278,8 @@ func (a *app) layoutToast(g *gocui.Gui, w, h int) error {
 	if err != nil && !isUnknownView(err) {
 		return err
 	}
-	v.FrameRunes = roundedFrame
-	v.FrameColor = gocui.ColorGreen
+	v.FrameRunes = a.theme.frame
+	v.FrameColor = a.theme.active
 	if a.msgErr {
 		v.FrameColor = gocui.ColorRed
 	}
@@ -642,19 +654,12 @@ func (a *app) popupRect(h int) (x0, y0, x1, y1 int) {
 	return x0, y0, x0 + pw, y0 + h - 1
 }
 
-// panelColors makes the focused panel green; popups use blue (see openPopup).
-func (a *app) panelColors() {
-	a.g.SelFgColor, a.g.SelFrameColor = gocui.ColorGreen, gocui.ColorGreen
-}
-
 func (a *app) openPopup(name string) {
 	a.modal = name
 	_, _ = a.g.SetViewOnTop(name)
-	a.g.SelFgColor, a.g.SelFrameColor = gocui.ColorBlue, gocui.ColorBlue
 }
 
 func (a *app) closePopup(name string) {
-	a.panelColors()
 	a.g.DeleteViewKeybindings(name)
 	_ = a.g.DeleteView(name)
 	a.modal = ""
@@ -672,7 +677,7 @@ func (a *app) prompt(title, initial string, mask bool, extra map[gocui.Key]func(
 	}
 	a.openPopup(vPrompt)
 	v.Title = " " + title + " "
-	v.FrameRunes = roundedFrame
+	v.FrameRunes = a.theme.frame
 	v.Editable = true
 	v.Editor = gocui.DefaultEditor
 	v.Wrap = false
@@ -727,7 +732,7 @@ func (a *app) confirm(msg string, yes func() error) error {
 	}
 	a.openPopup(vConfirm)
 	v.Title = " Confirm "
-	v.FrameRunes = roundedFrame
+	v.FrameRunes = a.theme.frame
 	v.Wrap = true
 	v.Clear()
 	fmt.Fprint(v, cRed+msg+cReset)
@@ -774,7 +779,7 @@ func (a *app) showHelp() error {
 	}
 	a.openPopup(vHelp)
 	v.Title = " Help "
-	v.FrameRunes = roundedFrame
+	v.FrameRunes = a.theme.frame
 	v.Clear()
 	fmt.Fprint(v, strings.Join(lines, "\n"))
 	if _, err := g.SetCurrentView(vHelp); err != nil {

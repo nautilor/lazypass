@@ -1,0 +1,14 @@
+# Copy to ~/.config/lazypass/config.yml
+# Same shape as lazygit's gui config. Colors: default, black, red, green,
+# yellow, blue, magenta, cyan, white or '#rrggbb'. Modifiers: bold, dim,
+# reverse, underline, strikethrough. An empty list uses the default.
+gui:
+  # rounded | single | double | bold | hidden
+  border: rounded
+  theme:
+    activeBorderColor: [green, bold]
+    inactiveBorderColor: [default]
+    optionsTextColor: [blue]
+    selectedLineBgColor: [blue]
+    inactiveViewSelectedLineBgColor: ['#444444']
+    defaultFgColor: [default]

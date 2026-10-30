@@ -31,3 +31,8 @@ NixOS:
 ```
 
 After changing Go dependencies, update `vendorHash` in `nix/package.nix`.
+
+## Config
+
+`~/.config/lazypass/config.yml` (or `-config PATH`) customises the look, using lazygit's
+`gui.theme` / `gui.border` keys. See `config.example.yml`.

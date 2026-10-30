@@ -158,6 +158,10 @@ func (a *app) layout(g *gocui.Gui) error {
 		if _, err := g.SetCurrentView(a.focus); err != nil {
 			return err
 		}
+	} else if _, err := g.SetViewOnTop(a.modal); err != nil {
+		// A popup opened before the first layout was created beneath the
+		// panels; raise it every pass so it never ends up see-through.
+		return err
 	}
 	return nil
 }

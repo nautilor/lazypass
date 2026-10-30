@@ -11,3 +11,23 @@ go build -o lazypass . && ./lazypass            # flags: -key PATH  -dir PATH ($
 ```
 
 Press `?` in-app for keys. Lose the private key = lose the passwords.
+
+## Nix
+
+```
+nix run github:<you>/lazypass     # or: nix run .
+nix develop                       # dev shell: go, gopls, delve, wl-clipboard
+```
+
+NixOS:
+
+```nix
+{
+  inputs.lazypass.url = "github:<you>/lazypass";
+  # in your system config:
+  imports = [ inputs.lazypass.nixosModules.default ];
+  programs.lazypass.enable = true;
+}
+```
+
+After changing Go dependencies, update `vendorHash` in `nix/package.nix`.

@@ -20,6 +20,7 @@ const (
 	vPrompt     = "prompt"
 	vConfirm    = "confirm"
 	vHelp       = "help"
+	vToast      = "toast"
 )
 
 var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
@@ -38,6 +39,7 @@ type app struct {
 	filter string
 	reveal bool
 	msg    string
+	msgErr bool
 
 	focus string
 	modal string // name of the active popup, "" if none
@@ -148,6 +150,10 @@ func (a *app) layout(g *gocui.Gui) error {
 	v.Frame = false
 	a.renderStatus(v)
 
+	if err := a.layoutToast(g, w, h); err != nil {
+		return err
+	}
+
 	if a.modal == "" {
 		if _, err := g.SetCurrentView(a.focus); err != nil {
 			return err
@@ -239,13 +245,37 @@ func (a *app) renderStatus(v *gocui.View) {
 		hints = "a: add  e: edit  d: delete  c: copy pw  u: copy user  space: reveal  /: filter  g: generate  ?: help  q: quit"
 	}
 	fmt.Fprintf(v, " %s%s%s", cCyan, hints, cReset)
-	if a.msg != "" {
-		fmt.Fprintf(v, "\n %s%s%s", cYel, a.msg, cReset)
+}
+
+// layoutToast floats a short-lived message above the status bar.
+func (a *app) layoutToast(g *gocui.Gui, w, h int) error {
+	if a.msg == "" {
+		if err := g.DeleteView(vToast); err != nil && !isUnknownView(err) {
+			return err
+		}
+		return nil
 	}
+	tw := min(len([]rune(a.msg))+4, w-2)
+	x0 := (w - tw) / 2
+	y1 := h - 4
+	v, err := g.SetView(vToast, x0, y1-2, x0+tw-1, y1, 0)
+	if err != nil && !isUnknownView(err) {
+		return err
+	}
+	v.FrameRunes = roundedFrame
+	v.FrameColor = gocui.ColorGreen
+	if a.msgErr {
+		v.FrameColor = gocui.ColorRed
+	}
+	v.Clear()
+	fmt.Fprint(v, " "+a.msg)
+	_, err = g.SetViewOnTop(vToast)
+	return err
 }
 
 func (a *app) setMsg(s string) {
 	a.msg = s
+	a.msgErr = strings.HasPrefix(s, "error") || strings.Contains(s, "failed")
 	if a.g != nil {
 		time.AfterFunc(4*time.Second, func() {
 			a.g.Update(func(*gocui.Gui) error {
@@ -577,7 +607,7 @@ func (a *app) copyField(which string) error {
 		a.setMsg("error: " + err.Error())
 		return nil
 	}
-	a.setMsg(fmt.Sprintf("copied %s (clears in %ds)", which, int(clipboardTTL.Seconds())))
+	a.setMsg(fmt.Sprintf("%s copied to clipboard (clears in %ds)", strings.ToUpper(which[:1])+which[1:], int(clipboardTTL.Seconds())))
 	if a.clipTimer != nil {
 		a.clipTimer.Stop()
 	}
@@ -594,7 +624,7 @@ func (a *app) genPassword() error {
 		a.setMsg("error: " + err.Error())
 		return nil
 	}
-	a.setMsg("generated password copied to clipboard")
+	a.setMsg("Generated password copied to clipboard")
 	return nil
 }
 
